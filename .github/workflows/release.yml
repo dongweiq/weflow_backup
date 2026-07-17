@@ -14,7 +14,7 @@ env:
 
 jobs:
   release-mac-arm64:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Check out git repository
@@ -68,9 +68,9 @@ jobs:
           set -euo pipefail
           export ELECTRON_BUILDER_BINARIES_MIRROR="https://github.com/electron-userland/electron-builder-binaries/releases/download/"
           echo "Using ELECTRON_BUILDER_BINARIES_MIRROR=$ELECTRON_BUILDER_BINARIES_MIRROR"
-          if ! npx electron-builder --mac dmg zip --arm64 --publish always '--config.npmRebuild=false' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}'; then
+          if ! npx electron-builder --mac dmg zip --arm64 --publish always '--config.npmRebuild=false' '--config.publish.channel=latest-arm64' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-arm64.${ext}'; then
             echo "::warning::DMG packaging failed (hdiutil instability on runner). Retrying with ZIP only."
-            npx electron-builder --mac zip --arm64 --publish always '--config.npmRebuild=false' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}'
+            npx electron-builder --mac zip --arm64 --publish always '--config.npmRebuild=false' '--config.publish.channel=latest-arm64' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-arm64.${ext}'
           fi
 
       - name: Inject minimumVersion into latest yml
@@ -84,7 +84,7 @@ jobs:
           REPO=${{ github.repository }}
           MINIMUM_VERSION="4.1.7"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
-          for YML_FILE in latest-mac.yml latest-arm64-mac.yml; do
+          for YML_FILE in latest-arm64-mac.yml; do
             if ! retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "$YML_FILE" --output "/tmp/$YML_FILE"; then
               echo "Skip $YML_FILE because download failed after retries."
               continue
@@ -94,6 +94,143 @@ jobs:
             fi
             retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" "/tmp/$YML_FILE" --clobber
           done
+
+  release-mac-x64:
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "npm"
+      - name: Install Dependencies
+        run: npm install --ignore-scripts
+
+      - name: Ensure mac key helpers are executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            resources/key/macos/universal/xkey_helper \
+            resources/key/macos/universal/image_scan_helper \
+            resources/key/macos/universal/xkey_helper_macos \
+            resources/key/macos/universal/libwx_key.dylib
+          do
+            if [ -f "$file" ]; then
+              chmod +x "$file"
+              ls -l "$file"
+            fi
+          done
+
+      - name: Sync version with tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Syncing package.json version to $VERSION"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+
+      - name: Build Frontend & Type Check
+        shell: bash
+        run: |
+          npx tsc
+          npx vite build
+
+      - name: Package and Publish macOS x64 (unsigned DMG + ZIP)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ELECTRON_BUILDER_BINARIES_MIRROR="https://github.com/electron-userland/electron-builder-binaries/releases/download/"
+          echo "Using ELECTRON_BUILDER_BINARIES_MIRROR=$ELECTRON_BUILDER_BINARIES_MIRROR"
+          if ! npx electron-builder --mac dmg zip --x64 --publish always '--config.npmRebuild=false' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-x64.${ext}'; then
+            echo "::warning::DMG packaging failed (hdiutil instability on runner). Retrying with ZIP only."
+            npx electron-builder --mac zip --x64 --publish always '--config.npmRebuild=false' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-x64.${ext}'
+          fi
+
+      - name: Inject minimumVersion into latest yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .github/scripts/release-utils.sh
+          TAG=${GITHUB_REF_NAME}
+          REPO=${{ github.repository }}
+          MINIMUM_VERSION="4.1.7"
+          wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
+          retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "latest-mac.yml" --output "/tmp/latest-mac.yml" || true
+          if [ -f /tmp/latest-mac.yml ] && ! grep -q 'minimumVersion' /tmp/latest-mac.yml; then
+            echo "minimumVersion: $MINIMUM_VERSION" >> /tmp/latest-mac.yml
+            retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" /tmp/latest-mac.yml --clobber
+          fi
+
+  release-mac-universal:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "npm"
+      - name: Install Dependencies
+        run: npm install --ignore-scripts
+
+      - name: Ensure mac key helpers are executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            resources/key/macos/universal/xkey_helper \
+            resources/key/macos/universal/image_scan_helper \
+            resources/key/macos/universal/xkey_helper_macos \
+            resources/key/macos/universal/libwx_key.dylib
+          do
+            if [ -f "$file" ]; then
+              chmod +x "$file"
+              ls -l "$file"
+            fi
+          done
+
+      - name: Sync version with tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Syncing package.json version to $VERSION"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+
+      - name: Build Frontend & Type Check
+        shell: bash
+        run: |
+          npx tsc
+          npx vite build
+
+      - name: Package and Publish macOS universal (unsigned DMG + ZIP)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ELECTRON_BUILDER_BINARIES_MIRROR="https://github.com/electron-userland/electron-builder-binaries/releases/download/"
+          echo "Using ELECTRON_BUILDER_BINARIES_MIRROR=$ELECTRON_BUILDER_BINARIES_MIRROR"
+          if ! npx electron-builder --mac dmg zip --universal --publish always '--config.npmRebuild=false' '--config.publish.channel=latest-universal' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-universal.${ext}'; then
+            echo "::warning::DMG packaging failed (hdiutil instability on runner). Retrying with ZIP only."
+            npx electron-builder --mac zip --universal --publish always '--config.npmRebuild=false' '--config.publish.channel=latest-universal' '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}' '--config.artifactName=${productName}-${version}-universal.${ext}'
+          fi
 
   release-linux:
     runs-on: ubuntu-latest
@@ -263,6 +400,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - release-mac-arm64
+      - release-mac-x64
+      - release-mac-universal
       - release-linux
       - release
       - release-windows-arm64
@@ -298,9 +437,17 @@ jobs:
             WINDOWS_ASSET="$(echo "$ASSETS_JSON" | jq -r '[.assets[].name | select(test("\\.exe$")) | select(test("arm64") | not)][0] // ""')"
           fi
           WINDOWS_ARM64_ASSET="$(echo "$ASSETS_JSON" | jq -r '[.assets[].name | select(test("arm64.*\\.exe$"))][0] // ""')"
-          MAC_ASSET="$(pick_asset "\\.dmg$")"
-          if [ -z "$MAC_ASSET" ]; then
-            MAC_ASSET="$(pick_asset "arm64\\.zip$")"
+          MAC_ARM64_ASSET="$(pick_asset "arm64[.]dmg$")"
+          if [ -z "$MAC_ARM64_ASSET" ]; then
+            MAC_ARM64_ASSET="$(pick_asset "arm64[.]zip$")"
+          fi
+          MAC_X64_ASSET="$(pick_asset "x64[.]dmg$")"
+          if [ -z "$MAC_X64_ASSET" ]; then
+            MAC_X64_ASSET="$(pick_asset "x64[.]zip$")"
+          fi
+          MAC_UNIVERSAL_ASSET="$(pick_asset "universal[.]dmg$")"
+          if [ -z "$MAC_UNIVERSAL_ASSET" ]; then
+            MAC_UNIVERSAL_ASSET="$(pick_asset "universal[.]zip$")"
           fi
           LINUX_TAR_ASSET="$(pick_asset "\\.tar\\.gz$")"
           LINUX_APPIMAGE_ASSET="$(pick_asset "\\.AppImage$")"
@@ -314,7 +461,9 @@ jobs:
 
           WINDOWS_URL="$(build_link "$WINDOWS_ASSET")"
           WINDOWS_ARM64_URL="$(build_link "$WINDOWS_ARM64_ASSET")"
-          MAC_URL="$(build_link "$MAC_ASSET")"
+          MAC_ARM64_URL="$(build_link "$MAC_ARM64_ASSET")"
+          MAC_X64_URL="$(build_link "$MAC_X64_ASSET")"
+          MAC_UNIVERSAL_URL="$(build_link "$MAC_UNIVERSAL_ASSET")"
           LINUX_TAR_URL="$(build_link "$LINUX_TAR_ASSET")"
           LINUX_APPIMAGE_URL="$(build_link "$LINUX_APPIMAGE_ASSET")"
 
@@ -328,7 +477,9 @@ jobs:
           ## 下载
           - Windows x64（Win10+）: [点击下载](${WINDOWS_URL:-$RELEASE_PAGE})
           - Windows arm64: [点击下载](${WINDOWS_ARM64_URL:-$RELEASE_PAGE})
-          - macOS（M系列芯片）: [点击下载](${MAC_URL:-$RELEASE_PAGE})
+          - macOS（Apple Silicon）: [点击下载](${MAC_ARM64_URL:-$RELEASE_PAGE})
+          - macOS（Intel）: [点击下载](${MAC_X64_URL:-$RELEASE_PAGE})
+          - macOS（Universal）: [点击下载](${MAC_UNIVERSAL_URL:-$RELEASE_PAGE})
           - Linux (.tar.gz): [点击下载](${LINUX_TAR_URL:-$RELEASE_PAGE})
           - Linux (.AppImage): [点击下载](${LINUX_APPIMAGE_URL:-$RELEASE_PAGE})
 
