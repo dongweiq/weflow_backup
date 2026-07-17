@@ -9,7 +9,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/hicccc77/WeFlow"
+    "url": "git+ssh://git@github.com/dongweiq/weflow_backup.git"
   },
   "//": "二改不应改变此处的作者与应用信息",
   "scripts": {
@@ -78,8 +78,8 @@
     "appId": "com.WeFlow.app",
     "publish": {
       "provider": "github",
-      "owner": "hicccc77",
-      "repo": "WeFlow",
+      "owner": "dongweiq",
+      "repo": "weflow_backup",
       "releaseType": "release"
     },
     "productName": "WeFlow",
